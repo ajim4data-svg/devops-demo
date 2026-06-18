@@ -12,6 +12,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Configure AWS credentials for SG fix
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Ensure EC2 security group allows SSH from GitHub Actions
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
+        run: |
+          SG="${{ secrets.EC2_SECURITY_GROUP_ID }}"
+          echo "Checking security group $SG for SSH port 22 ingress"
+          CURRENT=$(aws ec2 describe-security-groups --group-ids "$SG" --query "SecurityGroups[0].IpPermissions[?FromPort==`22` && ToPort==`22` && IpProtocol=='tcp'].IpRanges[].CidrIp" --output text)
+          echo "Current SSH CIDR rules: $CURRENT"
+          echo "Fetching GitHub Actions IP ranges"
+          RANGES=$(curl -s https://api.github.com/meta | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join(data.get("actions", [])))')
+          echo "GitHub Actions ranges:"
+          echo "$RANGES"
+          for CIDR in $RANGES; do
+            if echo "$CURRENT" | tr '\t' '\n' | grep -xq "$CIDR"; then
+              echo "Already allowed: $CIDR"
+            else
+              echo "Authorizing SSH for $CIDR"
+              aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
+            fi
+          done
+
       - name: Check EC2 SSH connectivity and run diagnostics on failure
         run: |
           HOST="${{ secrets.EC2_HOST }}"
