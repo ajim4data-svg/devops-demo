@@ -12,14 +12,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Check EC2 SSH connectivity
+      - name: Check EC2 SSH connectivity and run diagnostics on failure
         run: |
           HOST="${{ secrets.EC2_HOST }}"
+          USER="${{ secrets.EC2_USER }}"
           echo "Checking SSH connectivity to $HOST:22"
           if timeout 5 bash -c "exec 3<>/dev/tcp/$HOST/22" >/dev/null 2>&1; then
             echo "SSH port reachable"
           else
-            echo "SSH port unreachable"
+            echo "SSH port unreachable — running diagnostics"
+            sudo apt-get update -y
+            sudo apt-get install -y dnsutils traceroute netcat-openbsd openssh-client || true
+            echo "--- DNS resolution ---"
+            getent hosts "$HOST" || nslookup "$HOST" || host "$HOST" || true
+            echo "--- Traceroute (may be blocked by provider) ---"
+            traceroute -w 2 -q 1 -n "$HOST" || true
+            echo "--- Netcat test (connectivity) ---"
+            nc -vz -w 5 "$HOST" 22 || true
+            if [ -n "${{ secrets.EC2_SSH_KEY }}" ] && [ -n "$USER" ]; then
+              echo "--- Attempting verbose SSH (diagnostic, will not modify remote) ---"
+              printf "%s\n" "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key
+              chmod 600 /tmp/ec2_key
+              ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key -o BatchMode=yes -vvv -p 22 "$USER@$HOST" echo SSH_OK || true
+              rm -f /tmp/ec2_key
+            fi
+            echo "Diagnostics complete. Check EC2 security group, NACLs, and that $HOST is publicly reachable from GitHub Actions runners."
             exit 1
           fi
 
