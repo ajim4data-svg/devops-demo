@@ -13,17 +13,27 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Configure AWS credentials for SG fix
-        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$AWS_REGION" ] || [ -z "$EC2_SECURITY_GROUP_ID" ]; then
+            echo "AWS credentials or SG ID not provided; skipping security group fix."
+            exit 0
+          fi
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+          aws configure set region "$AWS_REGION"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
 
       - name: Ensure EC2 security group allows SSH from GitHub Actions
-        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
         run: |
-          SG="${{ secrets.EC2_SECURITY_GROUP_ID }}"
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$AWS_REGION" ] || [ -z "$EC2_SECURITY_GROUP_ID" ]; then
+            echo "AWS credentials or SG ID not provided; skipping security group fix."
+            exit 0
+          fi
+          SG="$EC2_SECURITY_GROUP_ID"
           echo "Checking security group $SG for SSH port 22 ingress"
           CURRENT=$(aws ec2 describe-security-groups --group-ids "$SG" --query "SecurityGroups[0].IpPermissions[?FromPort==`22` && ToPort==`22` && IpProtocol=='tcp'].IpRanges[].CidrIp" --output text)
           echo "Current SSH CIDR rules: $CURRENT"
@@ -39,6 +49,11 @@ jobs:
               aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
             fi
           done
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
 
       - name: Check EC2 SSH connectivity and run diagnostics on failure
         run: |
@@ -83,9 +98,12 @@ jobs:
             sudo docker run -d -p 3000:3000 devops-demo
 
       - name: Remove temporary GitHub Actions SSH ingress rules
-        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
         run: |
-          SG="${{ secrets.EC2_SECURITY_GROUP_ID }}"
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$AWS_REGION" ] || [ -z "$EC2_SECURITY_GROUP_ID" ]; then
+            echo "AWS credentials or SG ID not provided; skipping security group cleanup."
+            exit 0
+          fi
+          SG="$EC2_SECURITY_GROUP_ID"
           echo "Fetching GitHub Actions IP ranges"
           RANGES=$(curl -s https://api.github.com/meta | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join(data.get("actions", [])))')
           echo "Revoking SSH ingress rules for security group $SG"
@@ -93,3 +111,8 @@ jobs:
             echo "Revoking $CIDR"
             aws ec2 revoke-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
           done
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
