@@ -12,6 +12,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Check EC2 SSH connectivity
+        run: |
+          HOST="${{ secrets.EC2_HOST }}"
+          echo "Checking SSH connectivity to $HOST:22"
+          python3 - <<'PY'
+import os, socket, sys
+host=os.environ.get('HOST')
+s=socket.socket()
+s.settimeout(5)
+try:
+    s.connect((host,22))
+    print('SSH port reachable')
+except Exception as e:
+    print('SSH port unreachable:', e)
+    sys.exit(1)
+finally:
+    s.close()
+PY
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@master
         with:
