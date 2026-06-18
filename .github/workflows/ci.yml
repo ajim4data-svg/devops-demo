@@ -19,7 +19,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd devops-demo || git clone https://github.com/ajim4data-svg/devops-demo && cd devops-demo
+            cd devops-demo || git clone https://github.com/ajim4data-svg/devops-demo.git && cd devops-demo
             git pull
             sudo docker stop $(sudo docker ps -q) || true
             sudo docker rm $(sudo docker ps -aq) || true
