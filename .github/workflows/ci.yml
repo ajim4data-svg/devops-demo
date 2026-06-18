@@ -81,3 +81,15 @@ jobs:
             sudo docker rm $(sudo docker ps -aq) || true
             sudo docker build -t devops-demo .
             sudo docker run -d -p 3000:3000 devops-demo
+
+      - name: Remove temporary GitHub Actions SSH ingress rules
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION && secrets.EC2_SECURITY_GROUP_ID }}
+        run: |
+          SG="${{ secrets.EC2_SECURITY_GROUP_ID }}"
+          echo "Fetching GitHub Actions IP ranges"
+          RANGES=$(curl -s https://api.github.com/meta | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join(data.get("actions", [])))')
+          echo "Revoking SSH ingress rules for security group $SG"
+          for CIDR in $RANGES; do
+            echo "Revoking $CIDR"
+            aws ec2 revoke-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
+          done
