@@ -16,20 +16,12 @@ jobs:
         run: |
           HOST="${{ secrets.EC2_HOST }}"
           echo "Checking SSH connectivity to $HOST:22"
-          python3 - <<'PY'
-import os, socket, sys
-host=os.environ.get('HOST')
-s=socket.socket()
-s.settimeout(5)
-try:
-    s.connect((host,22))
-    print('SSH port reachable')
-except Exception as e:
-    print('SSH port unreachable:', e)
-    sys.exit(1)
-finally:
-    s.close()
-PY
+          if timeout 5 bash -c "exec 3<>/dev/tcp/$HOST/22" >/dev/null 2>&1; then
+            echo "SSH port reachable"
+          else
+            echo "SSH port unreachable"
+            exit 1
+          fi
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@master
