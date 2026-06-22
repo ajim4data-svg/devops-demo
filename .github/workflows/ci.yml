@@ -1,18 +1,19 @@
-name: CI/CD Pipeline
+ name: CI/CD to Kubernetes
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     env:
       IMAGE_NAME: ajim4datagmailcom/devops-demo:latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v3
 
       - name: Login to Docker Hub
         uses: docker/login-action@v5
@@ -45,92 +46,23 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
 
-      - name: Ensure EC2 security group allows SSH from GitHub Actions
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$AWS_REGION" ] || [ -z "$EC2_SECURITY_GROUP_ID" ]; then
-            echo "AWS credentials or SG ID not provided; skipping security group fix."
-            exit 0
-          fi
-          SG="$EC2_SECURITY_GROUP_ID"
-          echo "Checking security group $SG for SSH port 22 ingress"
-          CURRENT=$(aws ec2 describe-security-groups --group-ids "$SG" --query "SecurityGroups[0].IpPermissions[?FromPort==`22` && ToPort==`22` && IpProtocol=='tcp'].IpRanges[].CidrIp" --output text)
-          echo "Current SSH CIDR rules: $CURRENT"
-          echo "Fetching GitHub Actions IP ranges"
-          RANGES=$(curl -s https://api.github.com/meta | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join(data.get("actions", [])))')
-          echo "GitHub Actions ranges:"
-          echo "$RANGES"
-          for CIDR in $RANGES; do
-            if echo "$CURRENT" | tr '\t' '\n' | grep -xq "$CIDR"; then
-              echo "Already allowed: $CIDR"
-            else
-              echo "Authorizing SSH for $CIDR"
-              aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
-            fi
-          done
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+    - name: Docker login
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Check EC2 SSH connectivity and run diagnostics on failure
-        run: |
-          HOST="${{ secrets.EC2_HOST }}"
-          USER="${{ secrets.EC2_USER }}"
-          echo "Checking SSH connectivity to $HOST:22"
-          if timeout 5 bash -c "exec 3<>/dev/tcp/$HOST/22" >/dev/null 2>&1; then
-            echo "SSH port reachable"
-          else
-            echo "SSH port unreachable — running diagnostics"
-            sudo apt-get update -y
-            sudo apt-get install -y dnsutils traceroute netcat-openbsd openssh-client || true
-            echo "--- DNS resolution ---"
-            getent hosts "$HOST" || nslookup "$HOST" || host "$HOST" || true
-            echo "--- Traceroute (may be blocked by provider) ---"
-            traceroute -w 2 -q 1 -n "$HOST" || true
-            echo "--- Netcat test (connectivity) ---"
-            nc -vz -w 5 "$HOST" 22 || true
-            if [ -n "${{ secrets.EC2_SSH_KEY }}" ] && [ -n "$USER" ]; then
-              echo "--- Attempting verbose SSH (diagnostic, will not modify remote) ---"
-              printf "%s\n" "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key
-              chmod 600 /tmp/ec2_key
-              ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key -o BatchMode=yes -vvv -p 22 "$USER@$HOST" echo SSH_OK || true
-              rm -f /tmp/ec2_key
-            fi
-            echo "Diagnostics complete. Check EC2 security group, NACLs, and that $HOST is publicly reachable from GitHub Actions runners."
-            exit 1
-          fi
+    - name: Build image
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/devops-demo:latest .
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd devops-demo || git clone https://github.com/ajim4data-svg/devops-demo.git && cd devops-demo
-            git pull
-            sudo docker stop $(sudo docker ps -q) || true
-            sudo docker rm $(sudo docker ps -aq) || true
-            sudo docker build -t devops-demo .
-            sudo docker run -d -p 3000:3000 devops-demo
+    - name: Push image
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/devops-demo:latest
 
-      - name: Remove temporary GitHub Actions SSH ingress rules
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$AWS_REGION" ] || [ -z "$EC2_SECURITY_GROUP_ID" ]; then
-            echo "AWS credentials or SG ID not provided; skipping security group cleanup."
-            exit 0
-          fi
-          SG="$EC2_SECURITY_GROUP_ID"
-          echo "Fetching GitHub Actions IP ranges"
-          RANGES=$(curl -s https://api.github.com/meta | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join(data.get("actions", [])))')
-          echo "Revoking SSH ingress rules for security group $SG"
-          for CIDR in $RANGES; do
-            echo "Revoking $CIDR"
-            aws ec2 revoke-security-group-ingress --group-id "$SG" --protocol tcp --port 22 --cidr "$CIDR" || true
-          done
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          EC2_SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+    - name: Set Kubernetes context
+      uses: azure/setup-kubectl@v3
+
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl set image deployment/devops-deployment devops-container=${{ secrets.DOCKER_USERNAME }}/devops-demo:latest
