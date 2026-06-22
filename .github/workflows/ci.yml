@@ -39,14 +39,37 @@ jobs:
       - name: Set Kubernetes context
         uses: azure/setup-kubectl@v3
 
-      - name: Deploy to Kubernetes
+      - name: Deploy using KUBECONFIG secret
+        if: ${{ secrets.KUBECONFIG != '' }}
         env:
           KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
         run: |
-          if [ -z "$KUBECONFIG_CONTENT" ]; then
-            echo "KUBECONFIG secret not set — skipping Kubernetes deployment"
-            exit 0
-          fi
+          echo "Using KUBECONFIG secret to deploy"
           mkdir -p "$HOME/.kube"
           printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
           kubectl set image deployment/devops-deployment devops-container=${{ env.IMAGE_NAME }}
+
+      - name: Configure AWS credentials for EKS
+        if: ${{ secrets.KUBECONFIG == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.EKS_CLUSTER_NAME != '' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        if: ${{ secrets.KUBECONFIG == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.EKS_CLUSTER_NAME != '' }}
+        uses: aws-actions/eks-update-kubeconfig@v1
+        with:
+          cluster-name: ${{ secrets.EKS_CLUSTER_NAME }}
+          region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EKS
+        if: ${{ secrets.KUBECONFIG == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.EKS_CLUSTER_NAME != '' }}
+        run: |
+          kubectl set image deployment/devops-deployment devops-container=${{ env.IMAGE_NAME }}
+
+      - name: Skip Kubernetes deploy
+        if: ${{ secrets.KUBECONFIG == '' && (secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '' || secrets.EKS_CLUSTER_NAME == '') }}
+        run: |
+          echo "No KUBECONFIG or AWS/EKS details provided; skipping deployment"
