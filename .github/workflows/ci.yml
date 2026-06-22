@@ -15,36 +15,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Verify Docker secrets
+      - name: Validate Docker secrets
         run: |
-          echo "Verifying Docker secrets are set (values are hidden)..."
+          echo "Checking Docker repository credentials..."
           if [ -z "${{ secrets.DOCKER_USERNAME }}" ] || [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
             echo "::error::DOCKER_USERNAME or DOCKER_PASSWORD is not set in repository secrets"
             exit 1
           fi
 
-      - name: Login to Docker Hub
+      - name: Authenticate to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Build and publish Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ env.IMAGE_NAME }}
 
-      - name: Setup kubectl CLI
+      - name: Install kubectl
         uses: azure/setup-kubectl@v3
 
-      - name: Deploy using KUBECONFIG secret
+      - name: Use provided KUBECONFIG for deploy
         if: ${{ secrets.KUBECONFIG != '' }}
         env:
           KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
         run: |
-          echo "Using KUBECONFIG secret to deploy"
+          echo "Deploying with KUBECONFIG secret"
           mkdir -p "$HOME/.kube"
           printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
           kubectl set image deployment/devops-deployment devops-container=${{ env.IMAGE_NAME }}
@@ -57,14 +57,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Update kubeconfig for EKS
+      - name: Generate kubeconfig for EKS
         if: ${{ secrets.KUBECONFIG == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.AWS_REGION != '' && secrets.EKS_CLUSTER_NAME != '' }}
         uses: aws-actions/eks-update-kubeconfig@v1
         with:
           cluster-name: ${{ secrets.EKS_CLUSTER_NAME }}
           region: ${{ secrets.AWS_REGION }}
 
-      - name: Deploy to EKS
+      - name: Deploy to EKS cluster
         if: ${{ secrets.KUBECONFIG == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.AWS_REGION != '' && secrets.EKS_CLUSTER_NAME != '' }}
         run: |
           kubectl set image deployment/devops-deployment devops-container=${{ env.IMAGE_NAME }}
