@@ -1,4 +1,4 @@
- name: CI/CD to Kubernetes
+name: CI/CD to Kubernetes
 
 on:
   push:
@@ -27,8 +27,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.IMAGE_NAME }}
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}
-          cache-to: type=inline
 
       - name: Set Kubernetes context
         uses: azure/setup-kubectl@v3
