@@ -40,5 +40,13 @@ jobs:
         uses: azure/setup-kubectl@v3
 
       - name: Deploy to Kubernetes
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
         run: |
+          if [ -z "$KUBECONFIG_CONTENT" ]; then
+            echo "KUBECONFIG secret not set — skipping Kubernetes deployment"
+            exit 0
+          fi
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
           kubectl set image deployment/devops-deployment devops-container=${{ env.IMAGE_NAME }}
