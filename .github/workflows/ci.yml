@@ -24,10 +24,3 @@ jobs:
 
       - name: Push Docker image
         run: docker push ${{ secrets.DOCKER_USERNAME }}/devops-demo:latest
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
-
-      - name: Deploy to Kubernetes
-        run: |
-          kubectl set image deployment/devops-deployment devops-container=${{ secrets.DOCKER_USERNAME }}/devops-demo:latest
